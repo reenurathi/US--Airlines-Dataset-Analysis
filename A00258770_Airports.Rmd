@@ -1,0 +1,335 @@
+---
+title: "US Flights"
+author: "Reenu Rathi"
+date: "8 December 2018"
+output: html_document
+---
+
+###IMPORTING LIBRARIES
+Below code will import all the required libraries.
+```{r echo=TRUE, warning = FALSE, message = FALSE}
+library(Hmisc)
+library(sqldf)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(usmap)
+```
+
+###LOADING CSV FILE TO VARIABLES
+Below code will import the data present in CSV format into R.
+```{r echo=TRUE, warning = FALSE}
+USAirlines <- read.csv("US_Airlines.csv")
+USAirport <- read.csv("US_Airports.csv")
+USAirRecords <- read.csv("US_AirRecords.csv")
+```
+
+###DATA CLEANING
+
+####USAIRPORTS
+Identify missing values using summary and remove them
+```{r echo=TRUE, warning = FALSE}
+summary(USAirport)
+```
+Found 3 NA values, removing them from the dataset and veridy the data once again
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+USAirport <- USAirport %>%
+  filter(!is.na(LATITUDE))
+summary(USAirport)
+```
+
+####USAirRecords
+Let's move on to Data Cleaning for the US Airrecords dataset
+We will be utilizing Arival Delays for most of the analyses. Hence, we need to remove NA values from ARRIVAL_DELAY. After having a quick look at the data we realized that all Diverted flights have NA values for Delay. Hence, we are removing all diverted flights from dataset
+
+Let's first check what percentage of flights are diverted.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Diverted <- USAirRecords %>% 
+  filter(DIVERTED==1 & CANCELLED==0) %>% 
+  tally()
+percent <- (Diverted/520718)*100
+percent
+```
+Diverted flights are only 0.29% hence removing rows
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+USAirRecords <- USAirRecords %>% 
+  filter(DIVERTED==0)
+```
+Even after removing Diverted flight we realized that there are still NA values in ARRIVAL_DELAY which are only because of CANCELLED FLIGHT, below summary shows that there are no NA values for non-cancelled flights. Note we are not removing rows for cancelled flights, we will just put a filter in analysis.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+summary(USAirRecords %>% 
+          select (ARRIVAL_DELAY, CANCELLED) %>% 
+          filter(CANCELLED==0))
+```
+
+No changes in variable names or column transformation is required for the below analysis.
+
+###Plot Data and Find point of interest
+
+####Flight Delays and Number of flights by weekday
+Define a data frame with week names.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+days <- data.frame(Day=c("Mon","Tue","Wed","Thu","Fri","Sat","Sun"))
+```
+Calculate total ARRIVAL_DELAY and Flight count for each week day
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+WeekDay_Delays <- USAirRecords %>% 
+  group_by(DAY_OF_WEEK) %>% 
+  dplyr::summarise(AirlineDelay = sum(ARRIVAL_DELAY,na.rm = T))
+
+WeekDay_Count <- USAirRecords %>% 
+  group_by(DAY_OF_WEEK) %>% 
+  tally()
+```
+Merging two data frames to add week day names, corresponding to every week day
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+WeekDay_Delays <- cbind(WeekDay_Delays, days)
+WeekDay_Count <- cbind(WeekDay_Count, days)
+```
+Bar Graph displaying arrival delays for each week day.
+We can see that **Wedndesday** have the most delays.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE, fig.width = 7}
+barplot(WeekDay_Delays$AirlineDelay,
+        names.arg=WeekDay_Delays$Day,
+        main="Delays by WeekDay", 
+        xlab="Weekday",
+        ylab="Arrival Delay") 
+```
+
+
+Bar Graph displaying Number of flights for each week day.
+We can see that **Thursday** have highest flight count.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE, fig.width = 7}
+barplot(WeekDay_Count$n,
+        names.arg=WeekDay_Count$Day,
+        main="Flight Count by WeekDay", 
+        xlab="Weekday",
+        ylab="Arrival Delay")
+```
+
+From above two graphs we can see that even though flight count for Wednesday is almost same as Thursday, still delays are more on Wednesdays for some reason.
+
+####Most frequent cancellation reason
+Define a data frame with Cancellation Reasons as given
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Reason <- data.frame(Reason=c("Airline/Carrier", "Weather", "National Air System", "Security"))
+```
+Find out the count of cancelled flights for each reason
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+CancellationReason <- USAirRecords %>% 
+  filter(CANCELLED==1) %>% 
+  group_by(CANCELLATION_REASON) %>% 
+  tally()
+CancellationReason <- cbind(CancellationReason, Reason)
+
+print(c(toString(CancellationReason[which.max(CancellationReason$n),3]),"is the reson for maximum cancellations in US"))
+
+```
+####Average delay in flight due to Weather in non-cancelled flights
+Filter out the flights which got Cancelled and have no weather delays
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+AvgWeatherDelay <- USAirRecords %>% 
+  select(FLIGHT_NUMBER, WEATHER_DELAY, CANCELLED) %>% 
+  filter(CANCELLED==0 & WEATHER_DELAY != 0)
+```
+Removing outliers in delay that is exception cases, where delay is too high
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+summary(AvgWeatherDelay)
+AvgWeatherDelay <- AvgWeatherDelay %>% 
+  filter(WEATHER_DELAY > 13 & WEATHER_DELAY < 50)
+```
+Boxplot of the data to analyse the data distribtion.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+boxplot(AvgWeatherDelay$WEATHER_DELAY)
+```
+
+
+calculating average delay due to weather in general.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+print(c("Average delay due to weather is",toString(mean(AvgWeatherDelay$WEATHER_DELAY))))
+```
+
+####Find out counties with maximum number of flights flying out
+To find out Counties or States in US with maximum flight delays we will use the US Map and plot flight counts on map using colour scale.
+
+Firsty lets plot an empty US Map
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+plot_usmap(regions = "counties") + 
+  labs(title = "US Counties", subtitle = "This is a blank map of the counties of the United States.") + 
+  theme(panel.background = element_rect(colour = "black", fill = "lightblue"))
+```
+
+Create a DF of raw US Map data
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+FIPS_DF <- usmap::us_map()
+```
+
+We will use SQL queries to manipulate data and create required Dataset.
+
+First select STATE code and FIPS code from raw US Map data
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+FIPS <- sqldf("SELECT DISTINCT abbr, fips
+              FROM FIPS_DF
+              ")
+```
+get Flight Counts for each Airport from US Air record dataset
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+USFlightCount <- sqldf("SELECT ORIGIN_Airport, Count(FLIGHT_NUMBER) CNT
+                       FROM USAirRecords
+                       Where CANCELLED = 0
+                       GROUP BY ORIGIN_Airport"
+)
+
+```
+Join the FLight Count data set with US Airport data and calculate number of flights per State or County.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+USMapVal <- sqldf("SELECT DISTINCT UA.STATE, SUM(UFC.CNT) AS SUM
+              FROM USFlightCount UFC
+              Left JOin USAirport UA On UFC.ORIGIN_AIRPORT = UA.IATA_CODE
+              GROUP BY UA.STATE")
+```
+Finally join the raw US Map data with FIPS code (required to plot data on map) with the summarized flight count dataset.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+USMapFips <- sqldf("SELECT U.*, F.fips
+                    FROM USMapVal U
+                    JOIN FIPS F On F.abbr = U.STATE
+                   ")
+```
+Plot Flight count on US map for each county.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+plot_usmap(data=USMapFips, values = "SUM") +
+  scale_fill_gradientn( colours = topo.colors(7),
+                        name = "Flight Counts", label = scales::comma
+  ) + theme(legend.position = "right")
+```
+
+**From the graph we can easily identify that Texas is having most flights followed by California!**
+
+
+###Airlines with most Delays
+Calculate sum of delay in arrival for each airline
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Airline_Most_Delays <- USAirRecords %>% 
+  group_by(AIRLINE) %>% 
+  dplyr::summarise(AirlineDelay = sum(ARRIVAL_DELAY,na.rm = T))
+
+```
+Get the airline with maximum delays
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+MaxDelay <- Airline_Most_Delays[which.max(Airline_Most_Delays$AirlineDelay),1]
+print(c("Airline with Maximum Delays is",toString(USAirlines[USAirlines$IATA_CODE== toString(MaxDelay$AIRLINE), "AIRLINE"])))
+```
+
+Order the data with Asecending order of delay and plot the bargraph of last 10 rows i.e top 10 airlines with most delays
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Airline_Most_Delays <- Airline_Most_Delays %>% 
+  arrange(AirlineDelay)
+
+barplot(tail(Airline_Most_Delays$AirlineDelay,10),
+        names.arg=tail(Airline_Most_Delays$AIRLINE,10),
+        main="Sum ofval Delay by Airline", 
+        xlab="Airline Code",
+        ylab="Sum of Arrival Delay") 
+```
+
+
+###Identify Relation Between Distance and Flying Time
+In order to understand the relation betwen Airport distace and flying time we will plot a scatterplot.
+But first we need to remove outliers from Airtime
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+summary(USAirRecords$AIR_TIME)
+USAirRecordsFilt <- USAirRecords %>% 
+  filter(USAirRecords$AIR_TIME>61.0  )
+```
+
+remove outliers from Distance
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+summary(USAirRecordsFilt$DISTANCE)
+USAirRecordsFilt <- USAirRecordsFilt %>% 
+  filter(USAirRecordsFilt$DISTANCE>596 & USAirRecordsFilt$DISTANCE<3000)
+
+```
+
+Scatterplot to see the relation between Time And Distance
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+scatter.smooth(x = USAirRecordsFilt$DISTANCE,y = USAirRecordsFilt$AIR_TIME,
+               xlab = "Distance",
+               ylab = "Flying Time",
+               main = "Distance vs Flying Time"
+)
+```
+
+Further lets see the corelation value
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+cor(USAirRecordsFilt$DISTANCE, USAirRecordsFilt$AIR_TIME)
+```
+**Correalation of 0.984 suggests the strong positve realtion** 
+
+###Identify the Busiest Route
+We will count the number of flights for each pair of Oigin and Destination airport and identify the pair or route with maximum count
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Busiest_Route <- USAirRecords %>% 
+  select(ORIGIN_AIRPORT,DESTINATION_AIRPORT) %>% 
+  group_by(ORIGIN_AIRPORT,DESTINATION_AIRPORT) %>% 
+  tally %>% 
+  arrange(desc(n)) 
+Busiest_Route <- head(Busiest_Route,1)
+Busiest_Route
+print(c("Busiest Route is",toString(USAirport[USAirport$IATA_CODE=="SFO","AIRPORT"]), "to", toString(USAirport[USAirport$IATA_CODE=="LAX","AIRPORT"])))
+```
+
+###Analysis of choice
+####Prediction of ARRIVAL_DELAY
+Taking data for top 10 busiest route
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+FLightsData <- sqldf("SELECT ORIGIN_Airport, DESTINATION_AIRPORT, Count(FLIGHT_NUMBER) CNT
+                       FROM USAirRecords
+                       Where CANCELLED = 0
+                       GROUP BY ORIGIN_Airport,DESTINATION_AIRPORT
+                       ORDER BY Count(FLIGHT_NUMBER) DESC")
+                       
+FLightsData <- head(FLightsData,1)
+```
+
+Now we got ORIGIN and DESTINATION Airports for 10 busiest routes, now taking rows for only those airports
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Data <- sqldf("SELECT *
+                       FROM USAirRecords
+                       Where ORIGIN_Airport IN (SELECT ORIGIN_Airport FROM FLightsData)
+                       AND DESTINATION_AIRPORT IN (SELECT DESTINATION_AIRPORT FROM FLightsData)")
+
+```
+
+Taking only few coluns on which model is created.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Data_Subset <- Data %>% 
+  select(ARRIVAL_DELAY, AIR_TIME, WHEELS_OFF, TAXI_IN, SCHEDULED_DEPARTURE, SCHEDULED_ARRIVAL)
+```
+
+plotting the correation between the parameters in the dataset
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+pairs(~ .,data = Data_Subset)
+```
+
+defining training and testing dataset. Using 70-30 split for Train and Test dataset
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+Data_Train <- Data_Subset[0:955, ]
+Data_Test <- Data_Subset[0:408, ]
+
+```
+
+Multiple Linear Regression
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+LMmodel<- lm(ARRIVAL_DELAY ~., data = Data_Train)
+summary(LMmodel)
+
+```
+**Prediction Equation is
+ARRIVAL_DELAY = -63.05 + 0.50(AIR_TIME) + 0.02(WHEELS_OFF) + 0.95(TAXI_IN) -0.01(SCHEDULED_DEPARTURE) + 0.02(SCHEDULED_ARRIVAL)**
+Also, we can see that TAXI_IN and SCHEDULED_DEPARTURE are significant factors.
+
+The confidence interval of the model coefficient can be extracted as below.
+```{r echo=TRUE, warning = FALSE, tidy = TRUE}
+confint(LMmodel)
+```
